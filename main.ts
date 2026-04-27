@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS: SrtProcessorSettings = {
 export default class SrtProcessorPlugin extends Plugin {
 	settings: SrtProcessorSettings;
 	isProcessing: boolean = false;
+	shouldStop: boolean = false;  // 新增：停止标志
 
 	async onload() {
 		await this.loadSettings();
@@ -118,7 +119,7 @@ export default class SrtProcessorPlugin extends Plugin {
 		return this.settings.promptTemplate.replace(/\{\{content\}\}/g, content);
 	}
 	
-	// 调用Ollama API
+	// 调用Ollama API（支持停止检查）
 	async callOllama(prompt: string): Promise<string> {
 		const requestBody = {
 			model: this.settings.model,
@@ -137,6 +138,11 @@ export default class SrtProcessorPlugin extends Plugin {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(requestBody)
 			});
+			
+			// 检查是否收到停止信号
+			if (this.shouldStop) {
+				throw new Error('用户手动停止');
+			}
 			
 			if (response.status === 200) {
 				const data = response.json;
@@ -180,6 +186,34 @@ export default class SrtProcessorPlugin extends Plugin {
 		}
 	}
 	
+	// 新增：移动成功的文件到success文件夹（带时间戳处理重名）
+	async moveToSuccessFolder(file: TFile, sourceFolderPath: string) {
+		const successFolderPath = normalizePath(`${sourceFolderPath}/success`);
+		await this.ensureFolder(successFolderPath);
+		
+		let newFileName = file.name;
+		let newPath = normalizePath(`${successFolderPath}/${newFileName}`);
+		
+		// 检查是否存在同名文件
+		const existingFile = this.app.vault.getAbstractFileByPath(newPath);
+		if (existingFile) {
+			// 生成时间戳后缀
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+			const nameWithoutExt = file.name.replace(/\.srt$/i, '');
+			const extension = file.extension;
+			newFileName = `${nameWithoutExt}_${timestamp}.${extension}`;
+			newPath = normalizePath(`${successFolderPath}/${newFileName}`);
+			console.log(`文件重名，重命名为: ${newFileName}`);
+		}
+		
+		try {
+			await this.app.vault.rename(file, newPath);
+			console.log(`已移动成功文件: ${file.name} -> ${successFolderPath}/${newFileName}`);
+		} catch (error) {
+			console.error(`移动文件失败: ${file.name}`, error);
+		}
+	}
+	
 	// 保存生成的Markdown文件
 	async saveMarkdownContent(originalFileName: string, content: string): Promise<void> {
 		const outputFolder = normalizePath(this.settings.outputFolder);
@@ -205,6 +239,16 @@ export default class SrtProcessorPlugin extends Plugin {
 		}
 	}
 	
+	// 停止处理
+	async stopProcessing() {
+		if (this.isProcessing) {
+			this.shouldStop = true;
+			new Notice('正在停止处理，请稍候...');
+		} else {
+			new Notice('当前没有正在进行的处理任务');
+		}
+	}
+	
 	// 批量处理SRT文件的主函数
 	async processSrtFiles() {
 		// 防止重复执行
@@ -212,6 +256,9 @@ export default class SrtProcessorPlugin extends Plugin {
 			new Notice('已有处理任务正在进行中，请稍后...');
 			return;
 		}
+		
+		// 重置停止标志
+		this.shouldStop = false;
 		
 		// 验证配置
 		if (!this.settings.sourceFolder) {
@@ -249,17 +296,24 @@ export default class SrtProcessorPlugin extends Plugin {
 		this.isProcessing = true;
 		let successCount = 0;
 		let failCount = 0;
+		let stopRequested = false;
 		
 		// 开始提示
 		new Notice(`开始处理 ${srtFiles.length} 个SRT文件`);
 		
 		// 顺序处理每个文件
 		for (let i = 0; i < srtFiles.length; i++) {
+			// 检查停止标志
+			if (this.shouldStop) {
+				stopRequested = true;
+				new Notice(`用户已停止处理，已完成 ${i} 个文件`);
+				break;
+			}
+			
 			const file = srtFiles[i];
 			const currentNumber = i + 1;
 			
 			// 更新状态栏
-			this.addStatusBarItem();
 			const statusBar = this.addStatusBarItem();
 			statusBar.setText(`正在处理: ${file.name} (${currentNumber}/${srtFiles.length})`);
 			
@@ -271,12 +325,29 @@ export default class SrtProcessorPlugin extends Plugin {
 					throw new Error('文件内容为空');
 				}
 				
+				// 检查停止标志
+				if (this.shouldStop) {
+					statusBar.remove();
+					stopRequested = true;
+					break;
+				}
+				
 				// 步骤2: 构建提示词并调用Ollama
 				const prompt = this.buildPrompt(textContent);
 				const aiResponse = await this.callOllama(prompt);
 				
+				// 检查停止标志
+				if (this.shouldStop) {
+					statusBar.remove();
+					stopRequested = true;
+					break;
+				}
+				
 				// 步骤3: 保存为Markdown文件
 				await this.saveMarkdownContent(file.name, aiResponse);
+				
+				// 步骤4: 移动成功的文件到success文件夹
+				await this.moveToSuccessFolder(file, sourceFolderPath);
 				
 				successCount++;
 				statusBar.setText(`✅ 完成: ${file.name} (${currentNumber}/${srtFiles.length})`);
@@ -300,17 +371,28 @@ export default class SrtProcessorPlugin extends Plugin {
 		}
 		
 		this.isProcessing = false;
+		this.shouldStop = false;
 		
 		// 完成汇总弹框
-		let summaryMsg = `处理完成！\n成功: ${successCount} 个\n失败: ${failCount} 个`;
+		let summaryMsg = '';
+		if (stopRequested) {
+			summaryMsg = `已停止处理！\n成功: ${successCount} 个\n失败: ${failCount} 个`;
+		} else {
+			summaryMsg = `处理完成！\n成功: ${successCount} 个\n失败: ${failCount} 个`;
+		}
+		
 		if (failCount > 0) {
 			summaryMsg += `\n失败文件已移动到 ${this.settings.sourceFolder}/fail/ 文件夹`;
+		}
+		if (successCount > 0) {
+			summaryMsg += `\n成功文件已移动到 ${this.settings.sourceFolder}/success/ 文件夹`;
 		}
 		new Notice(summaryMsg);
 	}
 	
 	onunload() {
 		this.isProcessing = false;
+		this.shouldStop = false;
 		console.log('SRT Processor插件已卸载');
 	}
 }
@@ -329,6 +411,26 @@ class SrtProcessorSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		
 		containerEl.createEl('h2', { text: 'SRT批量处理器设置' });
+		
+		// 新增：控制按钮区域
+		const controlDiv = containerEl.createEl('div', { 
+			attr: { style: 'background: var(--background-secondary); padding: 12px; border-radius: 6px; margin-bottom: 20px;' } 
+		});
+		controlDiv.createEl('h3', { text: '控制面板' });
+		
+		// 停止按钮
+		new Setting(controlDiv)
+			.setName('停止处理')
+			.setDesc('立即停止当前正在进行的批量处理任务')
+			.addButton(button => button
+				.setButtonText('停止处理')
+				.setCta()
+				.setWarning()
+				.onClick(async () => {
+					await this.plugin.stopProcessing();
+				}));
+		
+		containerEl.createEl('hr');
 		
 		// 源文件夹路径
 		new Setting(containerEl)
@@ -427,10 +529,10 @@ class SrtProcessorSettingTab extends PluginSettingTab {
 					}
 				}));
 		
-		// 最大Tokens
+		// 最大Tokens - 添加单位
 		new Setting(containerEl)
-			.setName('最大Token数')
-			.setDesc('模型输出的最大长度')
+			.setName('最大Token数 (tokens)')
+			.setDesc('模型输出的最大长度，单位：tokens')
 			.addText(text => text
 				.setPlaceholder('2000')
 				.setValue(this.plugin.settings.maxTokens.toString())
@@ -480,7 +582,8 @@ class SrtProcessorSettingTab extends PluginSettingTab {
 		usageDiv.createEl('p', { text: '2. 确保Ollama服务已启动，点击"刷新模型列表"获取可用模型' });
 		usageDiv.createEl('p', { text: '3. 编写提示词模板，使用 {{content}} 代表字幕文本' });
 		usageDiv.createEl('p', { text: '4. 运行命令"批量处理SRT字幕文件"或点击左侧机器人图标开始处理' });
-		usageDiv.createEl('p', { text: '5. 失败的文件会被移动到源文件夹下的 fail 文件夹中' });
+		usageDiv.createEl('p', { text: '5. 处理过程中可随时点击设置中的"停止处理"按钮停止任务' });
+		usageDiv.createEl('p', { text: '6. 成功文件会移动到源文件夹下的 success 文件夹，失败文件移动到 fail 文件夹' });
 		usageDiv.createEl('p', { text: '⚠️ 注意：批量处理时会顺序调用Ollama模型，请确保本地模型可以正常响应' });
 	}
 }
