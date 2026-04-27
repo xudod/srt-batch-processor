@@ -1,0 +1,10 @@
+{
+  "id": "srt-batch-processor",
+  "name": "SRT Batch Processor",
+  "version": "1.0.0",
+  "minAppVersion": "1.12.0",
+  "description": "批量处理SRT字幕文件，调用本地Ollama模型生成Markdown文档",
+  "author": "Your Name",
+  "authorUrl": "",
+  "isDesktopOnly": true
+}

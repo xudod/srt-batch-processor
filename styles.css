@@ -1,0 +1,26 @@
+/* SRT Batch Processor 插件样式 */
+
+/* 设置界面中的提示词文本框美化 */
+.setting-item[data-id="promptTemplate"] textarea {
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    width: 100%;
+}
+
+/* 使用说明区域样式 */
+.usage-section {
+    background-color: var(--background-secondary);
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 20px;
+}
+
+.usage-section p {
+    margin: 8px 0;
+    font-size: 13px;
+}
