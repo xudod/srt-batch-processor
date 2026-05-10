@@ -2,6 +2,19 @@ import { Notice, requestUrl } from 'obsidian';
 import { ChunkResponse } from './types';
 
 /**
+ * JSON解析错误，包含原始响应内容
+ */
+export class JsonParseError extends Error {
+    public originalResponse: string;
+
+    constructor(message: string, originalResponse: string) {
+        super(message);
+        this.name = 'JsonParseError';
+        this.originalResponse = originalResponse;
+    }
+}
+
+/**
  * Ollama API客户端
  * 负责与本地Ollama服务通信
  */
@@ -198,7 +211,7 @@ export class OllamaClient {
             };
         } catch (error) {
             console.error('Failed to parse JSON response:', responseText);
-            throw new Error(`大模型返回的JSON格式错误: ${error.message}`);
+            throw new JsonParseError(`大模型返回的JSON格式错误: ${error.message}`, responseText);
         }
     }
 

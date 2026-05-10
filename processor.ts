@@ -1,7 +1,17 @@
 import { App, Notice, TFile, Vault, normalizePath } from 'obsidian';
-import { PluginSettings, ChunkResponse, ProcessResult, ChunkContext } from './types';
+import { PluginSettings, ChunkResponse, ProcessResult, ChunkContext, ProcessingStep } from './types';
 import { SubtitleExtractor } from './subtitle-extractor';
 import { OllamaClient } from './ollama-client';
+
+/**
+ * 分片进度回调类型
+ */
+export type ChunkStatusCallback = (
+    currentChunk: number, 
+    totalChunks: number, 
+    chunkDuration: number,
+    step: ProcessingStep
+) => void;
 
 /**
  * 字幕处理器
@@ -12,6 +22,7 @@ export class SubtitleProcessor {
     private settings: PluginSettings;
     private ollamaClient: OllamaClient;
     private onStatusUpdate?: (currentFile: string, current: number, total: number) => void;
+    private onChunkProgress?: ChunkStatusCallback;
 
     constructor(app: App, settings: PluginSettings, ollamaClient: OllamaClient) {
         this.app = app;
@@ -20,10 +31,26 @@ export class SubtitleProcessor {
     }
 
     /**
-     * 设置状态更新回调
+     * 设置状态更新回调（文件级别）
      */
     setStatusCallback(callback: (currentFile: string, current: number, total: number) => void) {
         this.onStatusUpdate = callback;
+    }
+
+    /**
+     * 设置分片进度回调
+     */
+    setChunkProgressCallback(callback: ChunkStatusCallback) {
+        this.onChunkProgress = callback;
+    }
+
+    /**
+     * 更新分片进度
+     */
+    private updateChunkProgress(currentChunk: number, totalChunks: number, chunkDuration: number, step: ProcessingStep) {
+        if (this.onChunkProgress) {
+            this.onChunkProgress(currentChunk, totalChunks, chunkDuration, step);
+        }
     }
 
     /**
@@ -116,6 +143,9 @@ export class SubtitleProcessor {
     private async step1ExtractText(srtFile: TFile): Promise<boolean> {
         const fileName = SubtitleExtractor.getFileNameWithoutExtension(srtFile.name);
         
+        // 通知正在提取文字
+        this.updateChunkProgress(0, 1, 0, 'extracting');
+        
         // 检查是否已存在纯文字文件
         if (await this.isTextOnlyExists(fileName)) {
             console.log(`纯文字文件已存在，跳过: ${fileName}`);
@@ -176,6 +206,9 @@ export class SubtitleProcessor {
         const chunks = SubtitleExtractor.splitByChineseChars(text, this.settings.chunkSize);
         console.log(`文本分片: 共 ${chunks.length} 片`);
         
+        // 通知开始处理分片
+        this.updateChunkProgress(0, chunks.length, 0, 'processing_chunks');
+        
         const context: ChunkContext = {
             carryOver: '',
             allNaturalSegments: [],
@@ -183,8 +216,11 @@ export class SubtitleProcessor {
             allKeywords: []
         };
         
+        let previousChunkDuration = 0;
+        
         // 逐片处理
         for (let i = 0; i < chunks.length; i++) {
+            const startTime = Date.now();
             let chunkContent = chunks[i];
             
             // 合并上一片的"应并入下一段"
@@ -200,6 +236,12 @@ export class SubtitleProcessor {
                     systemPrompt,
                     chunkContent
                 );
+                
+                // 计算当前分片处理时间
+                previousChunkDuration = Math.round((Date.now() - startTime) / 1000);
+                
+                // 更新进度
+                this.updateChunkProgress(i + 1, chunks.length, previousChunkDuration, 'processing_chunks');
                 
                 // 收集结果
                 if (response.自然分段) {
@@ -271,6 +313,9 @@ export class SubtitleProcessor {
             // 生成整体概括
             let overallSummary = '';
             if (summaries.length > 0 && this.settings.summaryPrompt) {
+                // 通知正在生成整体概括
+                this.updateChunkProgress(0, 1, 0, 'generating_summary');
+                
                 try {
                     overallSummary = await this.ollamaClient.generateOverallSummary(
                         this.settings.summaryPrompt,
@@ -281,6 +326,9 @@ export class SubtitleProcessor {
                     overallSummary = '整体概括生成失败';
                 }
             }
+            
+            // 通知正在保存结果
+            this.updateChunkProgress(0, 1, 0, 'saving');
             
             // 构建最终文件内容
             const finalContent = this.buildFinalContent(overallSummary, keywords, summaries, finalText);
@@ -296,6 +344,9 @@ export class SubtitleProcessor {
             } else {
                 await this.app.vault.create(outputPath, finalContent);
             }
+            
+            // 通知处理完成
+            this.updateChunkProgress(1, 1, 0, 'done');
             
         } catch (error) {
             console.error(`LLM处理失败: ${fileName}`, error);
@@ -449,26 +500,21 @@ export class SubtitleProcessor {
             for (let i = 0; i < srtFiles.length; i++) {
                 // 检查停止标志
                 if (this.settings.shouldStop) {
-                    new Notice('用户已停止处理');
                     break;
                 }
                 
                 const result = await this.processFile(srtFiles[i], i + 1, srtFiles.length);
                 results.push(result);
                 
-                // 显示进度
-                new Notice(`已完成: ${i + 1}/${srtFiles.length} - ${result.success ? '✓' : '✗'} ${result.fileName}`);
+                // 不显示每个文件的Notice弹窗，改为在状态栏显示进度
+                console.log(`已完成: ${i + 1}/${srtFiles.length} - ${result.success ? '✓' : '✗'} ${result.fileName}`);
             }
         } finally {
             this.settings.isProcessing = false;
             this.settings.shouldStop = false;
         }
         
-        // 显示最终结果
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
-        new Notice(`处理完成！成功: ${successCount}, 失败: ${failCount}`);
-        
+        // 显示最终结果（通过main.ts中的showProcessingResults显示，这里不再显示）
         return results;
     }
 
@@ -477,6 +523,5 @@ export class SubtitleProcessor {
      */
     stopProcessing(): void {
         this.settings.shouldStop = true;
-        new Notice('正在停止处理，当前文件完成后将停止...');
     }
 }

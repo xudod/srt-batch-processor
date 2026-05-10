@@ -1,5 +1,5 @@
 import { App, Notice, Plugin, PluginManifest, TFile, addIcon, Notice as ObsidianNotice } from 'obsidian';
-import { PluginSettings, ProcessResult, ProcessingStatus } from './types';
+import { PluginSettings, ProcessResult, ProcessingStatus, ProcessingStep } from './types';
 import { SubtitleProcessorSettingTab, DEFAULT_SETTINGS } from './settings';
 import { SubtitleProcessor } from './processor';
 import { OllamaClient } from './ollama-client';
@@ -8,6 +8,16 @@ import { OllamaClient } from './ollama-client';
 const STOP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>`;
 const PLAY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
 
+// 处理步骤中文映射
+const STEP_LABELS: Record<ProcessingStep, string> = {
+  idle: '空闲',
+  extracting: '提取文字',
+  processing_chunks: 'AI处理',
+  generating_summary: '生成概括',
+  saving: '保存结果',
+  done: '完成'
+};
+
 export default class NianHuaSaiBoXingProcessor extends Plugin {
   settings: PluginSettings;
   private processor: SubtitleProcessor | null = null;
@@ -15,6 +25,13 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
   private statusBarItem: HTMLElement | null = null;
   private ribbonIcon: HTMLElement | null = null;
   private processingInterval: NodeJS.Timeout | null = null;
+  
+  // 分片进度状态
+  private currentChunk: number = 0;
+  private totalChunks: number = 0;
+  private lastChunkDuration: number = 0;
+  private currentStep: ProcessingStep = 'idle';
+  private currentFileName: string = '';
 
   async onload() {
     await this.loadSettings();
@@ -30,9 +47,19 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     // 初始化处理器
     this.processor = new SubtitleProcessor(this.app, this.settings, this.ollamaClient);
     
-    // 设置状态更新回调
+    // 设置状态更新回调（文件级别）
     this.processor.setStatusCallback((currentFile: string, current: number, total: number) => {
+      this.currentFileName = currentFile;
       this.updateStatusBar(currentFile, current, total);
+    });
+    
+    // 设置分片进度回调
+    this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
+      this.currentChunk = currentChunk;
+      this.totalChunks = totalChunks;
+      this.lastChunkDuration = chunkDuration;
+      this.currentStep = step;
+      this.updateStatusBar(this.currentFileName, 0, 0); // 刷新显示
     });
     
     // 添加自定义图标
@@ -117,7 +144,15 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     if (this.processor) {
       this.processor = new SubtitleProcessor(this.app, this.settings, this.ollamaClient!);
       this.processor.setStatusCallback((currentFile: string, current: number, total: number) => {
+        this.currentFileName = currentFile;
         this.updateStatusBar(currentFile, current, total);
+      });
+      this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
+        this.currentChunk = currentChunk;
+        this.totalChunks = totalChunks;
+        this.lastChunkDuration = chunkDuration;
+        this.currentStep = step;
+        this.updateStatusBar(this.currentFileName, 0, 0);
       });
     }
   }
@@ -258,18 +293,63 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
   }
   
   /**
+   * 格式化时间显示
+   */
+  private formatDuration(seconds: number): string {
+    if (seconds < 60) {
+      return `${seconds}秒`;
+    } else if (seconds < 3600) {
+      const minutes = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return secs > 0 ? `${minutes}分${secs}秒` : `${minutes}分钟`;
+    } else {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return `${hours}小时${minutes}分`;
+    }
+  }
+
+  /**
    * 更新状态栏显示
    */
   private updateStatusBar(currentFile: string, current: number, total: number): void {
     if (!this.statusBarItem) return;
     
-    // 截断文件名（前7个字符）
+    // 截断文件名（前8个字符）
     let displayName = currentFile;
-    if (currentFile.length > 7) {
-      displayName = currentFile.substring(0, 7) + '...';
+    if (currentFile.length > 8) {
+      displayName = currentFile.substring(0, 8) + '...';
     }
     
-    this.statusBarItem.setText(`处理中: ${displayName} (${current}/${total})`);
+    // 构建进度文本
+    let progressText = '';
+    
+    if (this.settings.isProcessing) {
+      // 文件级别进度
+      if (total > 0) {
+        progressText = `${displayName} (${current}/${total})`;
+      } else if (currentFile) {
+        progressText = `${displayName}`;
+      }
+      
+      // 添加处理步骤
+      const stepLabel = STEP_LABELS[this.currentStep];
+      progressText += ` · ${stepLabel}`;
+      
+      // 添加分片进度（如果有分片）
+      if (this.totalChunks > 1) {
+        progressText += ` · 分片 ${this.currentChunk}/${this.totalChunks}`;
+        
+        // 显示上一个分片处理时间
+        if (this.lastChunkDuration > 0) {
+          progressText += ` · 上片${this.formatDuration(this.lastChunkDuration)}`;
+        }
+      }
+    } else {
+      progressText = '拈花赛博行就绪';
+    }
+    
+    this.statusBarItem.setText(progressText);
   }
   
   /**

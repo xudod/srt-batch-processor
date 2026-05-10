@@ -47,6 +47,23 @@ export interface ProcessingStatus {
   isProcessing: boolean;
 }
 
+// 分片进度信息
+export interface ChunkProgress {
+  currentChunk: number;      // 当前分片序号
+  totalChunks: number;       // 总分片数
+  chunkDuration: number;     // 上一个分片处理耗时（秒）
+  currentStep: ProcessingStep; // 当前处理步骤
+}
+
+// 处理步骤枚举
+export type ProcessingStep = 'idle' | 'extracting' | 'processing_chunks' | 'generating_summary' | 'saving' | 'done';
+
+// 完整进度信息
+export interface FullProgress {
+  fileProgress: ProcessingStatus;
+  chunkProgress: ChunkProgress;
+}
+
 // 分片处理上下文
 export interface ChunkContext {
   carryOver: string;            // 上一片应并入下一段的内容

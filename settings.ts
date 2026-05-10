@@ -174,9 +174,6 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
       .setName('模型名称')
       .setDesc('选择要使用的大模型')
       .addDropdown(async dropdown => {
-        // 添加刷新按钮的容器
-        const settingItem = dropdown.settingEl;
-        
         // 先添加选项
         if (this.availableModels.length > 0) {
           this.availableModels.forEach(model => {
@@ -243,7 +240,8 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
           }
         };
         
-        dropdown.settingEl.appendChild(refreshButton);
+        // 将刷新按钮添加到下拉框的父元素中
+        dropdown.selectEl.parentElement?.appendChild(refreshButton);
       });
 
     // 温度参数
