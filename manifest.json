@@ -1,10 +1,11 @@
 {
-  "id": "srt-batch-processor",
-  "name": "SRT Batch Processor",
+  "id": "nianshua-saiboxing-subtitle-processor",
+  "name": "拈花赛博行-字幕大模型处理",
   "version": "1.0.0",
-  "minAppVersion": "1.12.0",
-  "description": "批量处理SRT字幕文件，调用本地Ollama模型生成Markdown文档",
+  "minAppVersion": "1.12.7",
+  "description": "批量处理SRT字幕文件，调用Ollama大模型进行纠错、分段、总结和关键词提取",
   "author": "Your Name",
   "authorUrl": "",
-  "isDesktopOnly": true
+  "isDesktopOnly": true,
+  "fundingUrl": ""
 }

@@ -1,12 +1,16 @@
 {
-  "name": "obsidian-subtitle-to-text",
+  "name": "nianshua-saiboxing-subtitle-processor",
   "version": "1.0.0",
-  "description": "将字幕格式转换为纯文案",
+  "description": "批量处理SRT字幕文件，调用Ollama大模型进行纠错、分段、总结和关键词提取",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
+  "keywords": ["obsidian", "plugin", "subtitle", "ollama", "ai"],
+  "author": "Your Name",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.6",
     "@typescript-eslint/eslint-plugin": "5.29.0",

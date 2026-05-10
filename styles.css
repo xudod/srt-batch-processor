@@ -1,26 +1,62 @@
-/* SRT Batch Processor 插件样式 */
+/* 拈花赛博行-字幕大模型处理插件样式 */
 
-/* 设置界面中的提示词文本框美化 */
-.setting-item[data-id="promptTemplate"] textarea {
-    font-family: monospace;
-    font-size: 12px;
-    line-height: 1.4;
-    background-color: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    padding: 8px;
-    width: 100%;
+.nianshua-status-bar {
+  cursor: pointer;
+  padding: 0 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
 }
 
-/* 使用说明区域样式 */
-.usage-section {
-    background-color: var(--background-secondary);
-    padding: 12px;
-    border-radius: 6px;
-    margin-top: 20px;
+.nianshua-status-bar:hover {
+  background-color: var(--background-modifier-hover);
 }
 
-.usage-section p {
-    margin: 8px 0;
-    font-size: 13px;
+.nianshua-stop-button {
+  color: var(--text-error);
+  margin-left: 8px;
+}
+
+.nianshua-processing-indicator {
+  animation: nianshua-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes nianshua-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 设置页面样式 */
+.nianshua-settings-section {
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+
+.nianshua-settings-section:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.nianshua-model-select {
+  width: 100%;
+  max-width: 400px;
+}
+
+.nianshua-refresh-models {
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+.nianshua-danger-button {
+  background-color: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+.nianshua-danger-button:hover {
+  background-color: var(--background-modifier-error-hover);
 }
