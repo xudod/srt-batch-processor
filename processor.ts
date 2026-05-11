@@ -1,7 +1,26 @@
 import { App, Notice, TFile, Vault, normalizePath } from 'obsidian';
 import { PluginSettings, ChunkResponse, ProcessResult, ChunkContext, ProcessingStep } from './types';
 import { SubtitleExtractor } from './subtitle-extractor';
-import { OllamaClient } from './ollama-client';
+import { OllamaClient, JsonParseError } from './ollama-client';
+
+/**
+ * 分片处理错误，包含分片信息
+ */
+class ChunkProcessError extends Error {
+    public chunkIndex: number;
+    public totalChunks: number;
+    public chunkContent: string;
+    public originalResponse?: string;
+
+    constructor(message: string, chunkIndex: number, totalChunks: number, chunkContent: string, originalResponse?: string) {
+        super(message);
+        this.name = 'ChunkProcessError';
+        this.chunkIndex = chunkIndex;
+        this.totalChunks = totalChunks;
+        this.chunkContent = chunkContent;
+        this.originalResponse = originalResponse;
+    }
+}
 
 /**
  * 分片进度回调类型
@@ -262,8 +281,20 @@ export class SubtitleProcessor {
                     throw new Error('用户停止处理');
                 }
             } catch (error) {
+                // 捕获 JsonParseError 并添加分片信息
+                let originalResponse: string | undefined;
+                if (error instanceof JsonParseError) {
+                    originalResponse = error.originalResponse;
+                }
+                
                 console.error(`分片 ${i + 1} 处理失败:`, error);
-                throw error;
+                throw new ChunkProcessError(
+                    error.message,
+                    i + 1,
+                    chunks.length,
+                    chunkContent,
+                    originalResponse
+                );
             }
         }
         
@@ -398,23 +429,57 @@ export class SubtitleProcessor {
     /**
      * 记录失败日志
      */
-    private async logFailure(fileName: string, error: Error, originalFilePath: string): Promise<void> {
-        const logFilePath = normalizePath(`${this.getLogFolderPath()}/log.txt`);
+    private async logFailure(
+        fileName: string, 
+        error: Error, 
+        originalFilePath: string,
+        chunkIndex?: number,
+        totalChunks?: number,
+        chunkContent?: string
+    ): Promise<void> {
+        const logFilePath = normalizePath(`${this.getLogFolderPath()}/log.md`);
         
-        const logEntry = {
-            文件名: fileName,
-            失败时间: new Date().toLocaleString('zh-CN'),
-            失败原因: error.message
-        };
+        // 检查是否是 JsonParseError，获取原始响应
+        let originalResponse = '';
+        let errorDetails = error.message;
         
-        const logText = JSON.stringify(logEntry, null, 2) + '\n---\n';
+        if ('originalResponse' in error && typeof (error as any).originalResponse === 'string') {
+            originalResponse = (error as any).originalResponse as string;
+        }
         
-        // 追加日志
+        // 构建 Markdown 格式的日志
+        const timestamp = new Date().toLocaleString('zh-CN');
+        const divider = '---\n';
+        
+        let logContent = `## 失败文件: ${fileName}\n\n`;
+        logContent += `**失败时间**: ${timestamp}\n\n`;
+        logContent += `**失败原因**: ${errorDetails}\n\n`;
+        
+        if (chunkIndex !== undefined && totalChunks !== undefined) {
+            logContent += `**分片信息**: 第 ${chunkIndex} / ${totalChunks} 片\n\n`;
+        }
+        
+        // 如果有原始响应，记录下来
+        if (originalResponse) {
+            logContent += `**LLM 原始响应**:\n\`\`\`json\n${originalResponse}\n\`\`\`\n\n`;
+        }
+        
+        // 如果有分片内容，记录部分（前500字符）
+        if (chunkContent && chunkContent.length > 0) {
+            const previewContent = chunkContent.length > 500 
+                ? chunkContent.substring(0, 500) + '...(已截断)' 
+                : chunkContent;
+            logContent += `**分片内容预览** (前500字符):\n\`\`\`\n${previewContent}\n\`\`\`\n\n`;
+        }
+        
+        logContent += divider;
+        
+        // 追加日志到文件
         if (await this.app.vault.adapter.exists(logFilePath)) {
             const existingLog = await this.app.vault.adapter.read(logFilePath);
-            await this.app.vault.adapter.write(logFilePath, logText + existingLog);
+            await this.app.vault.adapter.write(logFilePath, logContent + existingLog);
         } else {
-            await this.app.vault.create(logFilePath, logText);
+            await this.app.vault.create(logFilePath, logContent);
         }
         
         // 移动原始SRT文件到日志目录
@@ -469,8 +534,30 @@ export class SubtitleProcessor {
             result.success = false;
             result.error = error.message;
             
+            // 检查是否是 ChunkProcessError，获取更多分片信息
+            let chunkIndex: number | undefined;
+            let totalChunks: number | undefined;
+            let chunkContent: string | undefined;
+            let originalResponse: string | undefined;
+            
+            if (error instanceof ChunkProcessError) {
+                chunkIndex = error.chunkIndex;
+                totalChunks = error.totalChunks;
+                chunkContent = error.chunkContent;
+                originalResponse = error.originalResponse;
+            } else if (error instanceof JsonParseError) {
+                originalResponse = error.originalResponse;
+            }
+            
             // 记录失败日志
-            await this.logFailure(fileName, error, srtFile.path);
+            await this.logFailure(
+                fileName, 
+                error, 
+                srtFile.path,
+                chunkIndex,
+                totalChunks,
+                chunkContent
+            );
         }
         
         return result;
