@@ -1,5 +1,4 @@
 import { Notice, requestUrl } from 'obsidian';
-import { ChunkResponse } from './types';
 
 /**
  * JSON解析错误，包含原始响应内容
@@ -15,30 +14,24 @@ export class JsonParseError extends Error {
 }
 
 /**
- * Ollama API客户端
- * 负责与本地Ollama服务通信
+ * Herdsman API客户端
+ * 负责与本地Herdsman服务通信（OpenAI兼容接口）
  */
-export class OllamaClient {
+export class HerdsmanClient {
     private baseUrl: string;
     private modelName: string;
-    private temperature: number;
-    private topP: number;
 
-    constructor(baseUrl: string, modelName: string, temperature: number, topP: number) {
+    constructor(baseUrl: string, modelName: string) {
         this.baseUrl = baseUrl.replace(/\/$/, ''); // 移除末尾斜杠
         this.modelName = modelName;
-        this.temperature = temperature;
-        this.topP = topP;
     }
 
     /**
      * 更新配置
      */
-    updateConfig(baseUrl: string, modelName: string, temperature: number, topP: number) {
+    updateConfig(baseUrl: string, modelName: string) {
         this.baseUrl = baseUrl.replace(/\/$/, '');
         this.modelName = modelName;
-        this.temperature = temperature;
-        this.topP = topP;
     }
 
     /**
@@ -48,7 +41,7 @@ export class OllamaClient {
     async listModels(): Promise<string[]> {
         try {
             const response = await requestUrl({
-                url: `${this.baseUrl}/api/tags`,
+                url: `${this.baseUrl}/v1/models`,
                 method: 'GET',
                 throw: false
             });
@@ -59,47 +52,45 @@ export class OllamaClient {
             }
 
             const data = response.json;
-            if (data && data.models && Array.isArray(data.models)) {
-                return data.models.map((model: any) => model.name);
+            if (data && data.data && Array.isArray(data.data)) {
+                return data.data.map((model: any) => model.id);
             }
             
             return [];
         } catch (error) {
-            console.error('Error fetching models from Ollama:', error);
+            console.error('Error fetching models from Herdsman:', error);
             return [];
         }
     }
 
     /**
-     * 测试Ollama服务连接
+     * 测试Herdsman服务连接
      * @returns 是否连接成功
      */
     async testConnection(): Promise<boolean> {
         try {
             const response = await requestUrl({
-                url: `${this.baseUrl}/api/tags`,
+                url: `${this.baseUrl}/v1/models`,
                 method: 'GET',
                 throw: false
             });
             
             return response.status === 200;
         } catch (error) {
-            console.error('Ollama connection test failed:', error);
+            console.error('Herdsman connection test failed:', error);
             return false;
         }
     }
 
     /**
-     * 调用大模型处理文本（支持流式输出）
+     * 调用大模型处理文本
      * @param systemPrompt 系统提示词
      * @param userContent 用户内容
-     * @param onChunk 流式输出回调（可选）
      * @returns 大模型响应文本
      */
     async chat(
         systemPrompt: string, 
-        userContent: string, 
-        onChunk?: (chunk: string) => void
+        userContent: string
     ): Promise<string> {
         const fullPrompt = systemPrompt.replace('{{content}}', userContent);
         
@@ -111,81 +102,39 @@ export class OllamaClient {
                     content: fullPrompt
                 }
             ],
-            stream: !!onChunk,
-            options: {
-                temperature: this.temperature,
-                top_p: this.topP
-            }
+            stream: false
         };
 
         try {
-            if (onChunk) {
-                // 流式输出模式
-                return await this.streamChat(body, onChunk);
-            } else {
-                // 非流式模式
-                const response = await requestUrl({
-                    url: `${this.baseUrl}/api/chat`,
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(body),
-                    throw: false
-                });
+            const response = await requestUrl({
+                url: `${this.baseUrl}/v1/chat/completions`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body),
+                throw: false
+            });
 
-                if (response.status !== 200) {
-                    throw new Error(`Ollama API error: ${response.status}`);
-                }
-
-                const data = response.json;
-                return data.message?.content || '';
+            if (response.status !== 200) {
+                throw new Error(`Herdsman API error: ${response.status}`);
             }
+
+            const data = response.json;
+            return data.choices?.[0]?.message?.content || '';
         } catch (error) {
-            console.error('Ollama chat error:', error);
+            console.error('Herdsman chat error:', error);
             throw new Error(`调用大模型失败: ${error.message}`);
         }
     }
 
     /**
-     * 流式聊天处理
-     */
-    private async streamChat(body: any, onChunk: (chunk: string) => void): Promise<string> {
-        // 注意：Obsidian的requestUrl不直接支持流式响应
-        // 这里使用非流式模式作为替代
-        // 如果需要真正的流式，可能需要使用fetch API
-        console.warn('Obsidian环境限制，使用非流式模式代替流式输出');
-        
-        const response = await requestUrl({
-            url: `${this.baseUrl}/api/chat`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ...body, stream: false }),
-            throw: false
-        });
-
-        if (response.status !== 200) {
-            throw new Error(`Ollama API error: ${response.status}`);
-        }
-
-        const data = response.json;
-        const content = data.message?.content || '';
-        
-        // 模拟流式输出，一次性输出全部内容
-        onChunk(content);
-        
-        return content;
-    }
-
-    /**
-     * 调用大模型处理分片，并解析JSON响应
+     * 调用大模型处理文本并解析JSON响应
      * @param systemPrompt 系统提示词
      * @param content 文本内容
      * @returns 解析后的JSON响应
      */
-    async processChunk(systemPrompt: string, content: string): Promise<ChunkResponse> {
+    async processText(systemPrompt: string, content: string): Promise<any> {
         const responseText = await this.chat(systemPrompt, content);
         
         try {
@@ -201,14 +150,7 @@ export class OllamaClient {
             }
             
             const parsed = JSON.parse(jsonText);
-            
-            // 验证必需字段
-            return {
-                自然分段: parsed.自然分段 || '',
-                分段总结: parsed.分段总结 || '',
-                关键字: Array.isArray(parsed.关键字) ? parsed.关键字 : [],
-                应并入下一段: parsed.应并入下一段 || ''
-            };
+            return parsed;
         } catch (error) {
             console.error('Failed to parse JSON response:', responseText);
             throw new JsonParseError(`大模型返回的JSON格式错误: ${error.message}`, responseText);

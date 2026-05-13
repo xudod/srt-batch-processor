@@ -2,7 +2,7 @@ import { App, Notice, Plugin, PluginManifest, TFile, addIcon, Notice as Obsidian
 import { PluginSettings, ProcessResult, ProcessingStatus, ProcessingStep } from './types';
 import { SubtitleProcessorSettingTab, DEFAULT_SETTINGS } from './settings';
 import { SubtitleProcessor } from './processor';
-import { OllamaClient } from './ollama-client';
+import { HerdsmanClient } from './herdsman-client';
 
 // 自定义图标（停止图标）
 const STOP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>`;
@@ -12,7 +12,7 @@ const PLAY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24
 const STEP_LABELS: Record<ProcessingStep, string> = {
   idle: '空闲',
   extracting: '提取文字',
-  processing_chunks: 'AI处理',
+  processing: 'AI处理',
   generating_summary: '生成概括',
   saving: '保存结果',
   done: '完成'
@@ -21,31 +21,26 @@ const STEP_LABELS: Record<ProcessingStep, string> = {
 export default class NianHuaSaiBoXingProcessor extends Plugin {
   settings: PluginSettings;
   private processor: SubtitleProcessor | null = null;
-  private ollamaClient: OllamaClient | null = null;
+  private herdsmanClient: HerdsmanClient | null = null;
   private statusBarItem: HTMLElement | null = null;
   private ribbonIcon: HTMLElement | null = null;
   private processingInterval: NodeJS.Timeout | null = null;
   
-  // 分片进度状态
-  private currentChunk: number = 0;
-  private totalChunks: number = 0;
-  private lastChunkDuration: number = 0;
+  // 进度状态
   private currentStep: ProcessingStep = 'idle';
   private currentFileName: string = '';
 
   async onload() {
     await this.loadSettings();
     
-    // 初始化Ollama客户端
-    this.ollamaClient = new OllamaClient(
-      this.settings.ollamaUrl,
-      this.settings.modelName,
-      this.settings.temperature,
-      this.settings.topP
+    // 初始化Herdsman客户端
+    this.herdsmanClient = new HerdsmanClient(
+      this.settings.herdsmanUrl,
+      this.settings.modelName
     );
     
     // 初始化处理器
-    this.processor = new SubtitleProcessor(this.app, this.settings, this.ollamaClient);
+    this.processor = new SubtitleProcessor(this.app, this.settings, this.herdsmanClient);
     
     // 设置状态更新回调（文件级别）
     this.processor.setStatusCallback((currentFile: string, current: number, total: number) => {
@@ -53,11 +48,8 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
       this.updateStatusBar(currentFile, current, total);
     });
     
-    // 设置分片进度回调
+    // 设置进度回调
     this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
-      this.currentChunk = currentChunk;
-      this.totalChunks = totalChunks;
-      this.lastChunkDuration = chunkDuration;
       this.currentStep = step;
       this.updateStatusBar(this.currentFileName, 0, 0); // 刷新显示
     });
@@ -131,26 +123,21 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     await this.saveData(this.settings);
     
     // 更新客户端配置
-    if (this.ollamaClient) {
-      this.ollamaClient.updateConfig(
-        this.settings.ollamaUrl,
-        this.settings.modelName,
-        this.settings.temperature,
-        this.settings.topP
+    if (this.herdsmanClient) {
+      this.herdsmanClient.updateConfig(
+        this.settings.herdsmanUrl,
+        this.settings.modelName
       );
     }
     
     // 更新处理器
     if (this.processor) {
-      this.processor = new SubtitleProcessor(this.app, this.settings, this.ollamaClient!);
+      this.processor = new SubtitleProcessor(this.app, this.settings, this.herdsmanClient!);
       this.processor.setStatusCallback((currentFile: string, current: number, total: number) => {
         this.currentFileName = currentFile;
         this.updateStatusBar(currentFile, current, total);
       });
       this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
-        this.currentChunk = currentChunk;
-        this.totalChunks = totalChunks;
-        this.lastChunkDuration = chunkDuration;
         this.currentStep = step;
         this.updateStatusBar(this.currentFileName, 0, 0);
       });
@@ -162,7 +149,7 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
    */
   private checkConfiguration(): void {
     if (!this.settings.modelName) {
-      console.warn('未配置Ollama模型，请在设置中选择模型');
+      console.warn('未配置Herdsman模型，请在设置中选择模型');
     }
     
     if (!this.settings.systemPrompt || !this.settings.systemPrompt.includes('{{content}}')) {
@@ -182,15 +169,15 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     
     // 检查模型配置
     if (!this.settings.modelName) {
-      new Notice('请先在设置中配置Ollama模型');
+      new Notice('请先在设置中配置Herdsman模型');
       return false;
     }
     
-    // 测试Ollama连接
-    if (this.ollamaClient) {
-      const isConnected = await this.ollamaClient.testConnection();
+    // 测试Herdsman连接
+    if (this.herdsmanClient) {
+      const isConnected = await this.herdsmanClient.testConnection();
       if (!isConnected) {
-        new Notice('无法连接到Ollama服务，请检查服务是否运行');
+        new Notice('无法连接到Herdsman服务，请检查服务是否运行');
         return false;
       }
     }
@@ -208,7 +195,7 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     }
     
     // 确认开始
-    const confirmed = confirm('开始处理字幕文件？\n\n处理过程可能需要较长时间，请确保Ollama服务正常运行。\n\n可以在设置页面或点击丝带图标停止处理。');
+    const confirmed = confirm('开始处理字幕文件？\n\n处理过程可能需要较长时间，请确保Herdsman服务正常运行。\n\n可以在设置页面或点击丝带图标停止处理。');
     if (!confirmed) {
       return;
     }
@@ -291,23 +278,6 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
       }
     }
   }
-  
-  /**
-   * 格式化时间显示
-   */
-  private formatDuration(seconds: number): string {
-    if (seconds < 60) {
-      return `${seconds}秒`;
-    } else if (seconds < 3600) {
-      const minutes = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return secs > 0 ? `${minutes}分${secs}秒` : `${minutes}分钟`;
-    } else {
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      return `${hours}小时${minutes}分`;
-    }
-  }
 
   /**
    * 更新状态栏显示
@@ -335,16 +305,6 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
       // 添加处理步骤
       const stepLabel = STEP_LABELS[this.currentStep];
       progressText += ` · ${stepLabel}`;
-      
-      // 添加分片进度（如果有分片）
-      if (this.totalChunks > 1) {
-        progressText += ` · 分片 ${this.currentChunk}/${this.totalChunks}`;
-        
-        // 显示上一个分片处理时间
-        if (this.lastChunkDuration > 0) {
-          progressText += ` · 上片${this.formatDuration(this.lastChunkDuration)}`;
-        }
-      }
     } else {
       progressText = '拈花赛博行就绪';
     }
@@ -398,7 +358,7 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
    */
   getProcessingStatus(): ProcessingStatus {
     return {
-      total: 0, // 实际值需要从processor获取，简化处理
+      total: 0,
       current: 0,
       currentFile: '',
       isProcessing: this.settings.isProcessing

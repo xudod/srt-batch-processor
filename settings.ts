@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { PluginSettings } from './types';
-import { OllamaClient } from './ollama-client';
+import { HerdsmanClient } from './herdsman-client';
 
 // 默认配置
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -11,20 +11,16 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   outputFolder: '120-处理后文件',
   logFolder: '130-处理日志记录',
   
-  // Ollama配置
-  ollamaUrl: 'http://localhost:11434',
+  // Herdsman配置
+  herdsmanUrl: 'http://localhost:8080/v1',
   modelName: '',
-  temperature: 0.7,
-  topP: 0.9,
   
   // 处理配置
-  chunkSize: 5000,
-  systemPrompt: `请帮我把这个字幕内容整理成口播文案，自然分段，移除与文案无关的信息，不要有任何文案内容的删减和调整，输出文案内容部分，要与原文长度基本一致。另外要输出分段总结，关键字。如果有内容和本段不相关，就输出到应并入下一段这部分，输出内容要严格按照json的形式输出。格式如下
+  systemPrompt: `请帮我把这个字幕内容整理成口播文案，自然分段，移除与文案无关的信息，不要有任何文案内容的删减和调整，输出文案内容部分，要与原文长度基本一致。另外要输出分段总结，关键字。输出内容要严格按照json的形式输出。格式如下
 {
   "自然分段": "...",
   "分段总结": "...",
-  "关键字": ["..."],
-  "应并入下一段": "这部分内容..."
+  "关键字": ["..."]
 }
 以下是字幕内容
 {{content}}`,
@@ -38,7 +34,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
 export class SubtitleProcessorSettingTab extends PluginSettingTab {
   plugin: any; // 插件实例
-  ollamaClient: OllamaClient | null = null;
+  herdsmanClient: HerdsmanClient | null = null;
   availableModels: string[] = [];
   isRefreshingModels: boolean = false;
 
@@ -51,18 +47,16 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // 初始化Ollama客户端用于测试连接
-    this.ollamaClient = new OllamaClient(
-      this.plugin.settings.ollamaUrl,
-      this.plugin.settings.modelName,
-      this.plugin.settings.temperature,
-      this.plugin.settings.topP
+    // 初始化Herdsman客户端用于测试连接
+    this.herdsmanClient = new HerdsmanClient(
+      this.plugin.settings.herdsmanUrl,
+      this.plugin.settings.modelName
     );
 
     // 标题
     containerEl.createEl('h2', { text: '拈花赛博行-字幕大模型处理设置' });
     containerEl.createEl('p', { 
-      text: '批量处理SRT字幕文件，调用Ollama大模型进行纠错、分段、总结和关键词提取',
+      text: '批量处理SRT字幕文件，调用Herdsman大模型进行纠错、分段、总结和关键词提取',
       attr: { style: 'color: var(--text-muted); margin-bottom: 20px;' }
     });
 
@@ -127,26 +121,23 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
     // 分隔线
     containerEl.createEl('hr');
 
-    // ========== Ollama配置 ==========
-    containerEl.createEl('h3', { text: '🤖 Ollama 配置' });
+    // ========== Herdsman配置 ==========
+    containerEl.createEl('h3', { text: '🤖 Herdsman 配置' });
 
-    // Ollama服务地址
+    // Herdsman服务地址
     new Setting(containerEl)
-      .setName('Ollama服务地址')
-      .setDesc('本地Ollama服务的API地址')
+      .setName('Herdsman服务地址')
+      .setDesc('本地Herdsman服务的API地址（OpenAI兼容）')
       .addText(text => text
-        .setPlaceholder('http://localhost:11434')
-        .setValue(this.plugin.settings.ollamaUrl)
+        .setPlaceholder('http://localhost:8080/v1')
+        .setValue(this.plugin.settings.herdsmanUrl)
         .onChange(async (value) => {
-          this.plugin.settings.ollamaUrl = value;
+          this.plugin.settings.herdsmanUrl = value;
           await this.plugin.saveSettings();
-          // 更新Ollama客户端
-          if (this.ollamaClient) {
-            this.ollamaClient.updateConfig(
+          if (this.herdsmanClient) {
+            this.herdsmanClient.updateConfig(
               value,
-              this.plugin.settings.modelName,
-              this.plugin.settings.temperature,
-              this.plugin.settings.topP
+              this.plugin.settings.modelName
             );
           }
         }));
@@ -154,17 +145,17 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
     // 测试连接按钮
     new Setting(containerEl)
       .setName('测试连接')
-      .setDesc('测试是否能连接到Ollama服务')
+      .setDesc('测试是否能连接到Herdsman服务')
       .addButton(button => button
         .setButtonText('测试连接')
         .setCta()
         .onClick(async () => {
-          if (this.ollamaClient) {
-            const isConnected = await this.ollamaClient.testConnection();
+          if (this.herdsmanClient) {
+            const isConnected = await this.herdsmanClient.testConnection();
             if (isConnected) {
-              new Notice('✓ Ollama连接成功');
+              new Notice('✓ Herdsman连接成功');
             } else {
-              new Notice('✗ Ollama连接失败，请检查服务是否运行');
+              new Notice('✗ Herdsman连接失败，请检查服务是否运行');
             }
           }
         }));
@@ -174,7 +165,6 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
       .setName('模型名称')
       .setDesc('选择要使用的大模型')
       .addDropdown(async dropdown => {
-        // 先添加选项
         if (this.availableModels.length > 0) {
           this.availableModels.forEach(model => {
             dropdown.addOption(model, model);
@@ -187,17 +177,14 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
         dropdown.onChange(async (value) => {
           this.plugin.settings.modelName = value;
           await this.plugin.saveSettings();
-          if (this.ollamaClient) {
-            this.ollamaClient.updateConfig(
-              this.plugin.settings.ollamaUrl,
-              value,
-              this.plugin.settings.temperature,
-              this.plugin.settings.topP
+          if (this.herdsmanClient) {
+            this.herdsmanClient.updateConfig(
+              this.plugin.settings.herdsmanUrl,
+              value
             );
           }
         });
         
-        // 添加刷新按钮
         const refreshButton = document.createElement('button');
         refreshButton.textContent = '🔄 刷新模型列表';
         refreshButton.style.marginLeft = '8px';
@@ -209,14 +196,13 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
           refreshButton.disabled = true;
           
           try {
-            if (this.ollamaClient) {
-              const models = await this.ollamaClient.listModels();
+            if (this.herdsmanClient) {
+              const models = await this.herdsmanClient.listModels();
               this.availableModels = models;
               
-              // 更新下拉框
               dropdown.selectEl.empty();
               if (models.length === 0) {
-                dropdown.addOption('', '未找到模型，请先在Ollama中下载模型');
+                dropdown.addOption('', '未找到模型');
               } else {
                 models.forEach(model => {
                   dropdown.addOption(model, model);
@@ -232,7 +218,7 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
               new Notice(`找到 ${models.length} 个模型`);
             }
           } catch (error) {
-            new Notice('加载模型列表失败，请检查Ollama连接');
+            new Notice('加载模型列表失败，请检查Herdsman连接');
           } finally {
             this.isRefreshingModels = false;
             refreshButton.textContent = '🔄 刷新模型列表';
@@ -240,90 +226,14 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
           }
         };
         
-        // 将刷新按钮添加到下拉框的父元素中
         dropdown.selectEl.parentElement?.appendChild(refreshButton);
       });
-
-    // 温度参数
-    new Setting(containerEl)
-      .setName('Temperature（温度）')
-      .setDesc('控制输出的随机性，值越高输出越随机（0-1）')
-      .addSlider(slider => slider
-        .setLimits(0, 1, 0.01)
-        .setValue(this.plugin.settings.temperature)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.temperature = value;
-          await this.plugin.saveSettings();
-          if (this.ollamaClient) {
-            this.ollamaClient.updateConfig(
-              this.plugin.settings.ollamaUrl,
-              this.plugin.settings.modelName,
-              value,
-              this.plugin.settings.topP
-            );
-          }
-        }))
-      .addText(text => text
-        .setValue(this.plugin.settings.temperature.toString())
-        .onChange(async (value) => {
-          const num = parseFloat(value);
-          if (!isNaN(num) && num >= 0 && num <= 1) {
-            this.plugin.settings.temperature = num;
-            await this.plugin.saveSettings();
-          }
-        }));
-
-    // Top P参数
-    new Setting(containerEl)
-      .setName('Top P')
-      .setDesc('核采样参数，控制输出的多样性（0-1）')
-      .addSlider(slider => slider
-        .setLimits(0, 1, 0.01)
-        .setValue(this.plugin.settings.topP)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.topP = value;
-          await this.plugin.saveSettings();
-          if (this.ollamaClient) {
-            this.ollamaClient.updateConfig(
-              this.plugin.settings.ollamaUrl,
-              this.plugin.settings.modelName,
-              this.plugin.settings.temperature,
-              value
-            );
-          }
-        }))
-      .addText(text => text
-        .setValue(this.plugin.settings.topP.toString())
-        .onChange(async (value) => {
-          const num = parseFloat(value);
-          if (!isNaN(num) && num >= 0 && num <= 1) {
-            this.plugin.settings.topP = num;
-            await this.plugin.saveSettings();
-          }
-        }));
 
     // 分隔线
     containerEl.createEl('hr');
 
     // ========== 处理配置 ==========
     containerEl.createEl('h3', { text: '⚙️ 处理配置' });
-
-    // 分片大小
-    new Setting(containerEl)
-      .setName('分片大小（中文字符数）')
-      .setDesc('超过此字符数的文本将自动分片处理，建议5000-10000')
-      .addText(text => text
-        .setPlaceholder('5000')
-        .setValue(this.plugin.settings.chunkSize.toString())
-        .onChange(async (value) => {
-          const num = parseInt(value);
-          if (!isNaN(num) && num > 0) {
-            this.plugin.settings.chunkSize = num;
-            await this.plugin.saveSettings();
-          }
-        }));
 
     // 系统提示词
     new Setting(containerEl)
@@ -393,7 +303,7 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
           if (confirmed) {
             Object.assign(this.plugin.settings, DEFAULT_SETTINGS);
             await this.plugin.saveSettings();
-            this.display(); // 刷新界面
+            this.display();
             new Notice('设置已重置为默认值');
           }
         }));

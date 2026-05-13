@@ -7,14 +7,11 @@ export interface PluginSettings {
   outputFolder: string;         // 处理后文件文件夹
   logFolder: string;            // 日志文件夹
   
-  // Ollama配置
-  ollamaUrl: string;            // Ollama服务地址
+  // Herdsman配置
+  herdsmanUrl: string;          // Herdsman服务地址
   modelName: string;            // 模型名称
-  temperature: number;          // 温度参数
-  topP: number;                 // Top P参数
   
   // 处理配置
-  chunkSize: number;            // 分片大小（中文字符数）
   systemPrompt: string;         // 系统提示词（字幕处理）
   summaryPrompt: string;        // 系统提示词（整体概括）
   
@@ -47,27 +44,5 @@ export interface ProcessingStatus {
   isProcessing: boolean;
 }
 
-// 分片进度信息
-export interface ChunkProgress {
-  currentChunk: number;      // 当前分片序号
-  totalChunks: number;       // 总分片数
-  chunkDuration: number;     // 上一个分片处理耗时（秒）
-  currentStep: ProcessingStep; // 当前处理步骤
-}
-
 // 处理步骤枚举
-export type ProcessingStep = 'idle' | 'extracting' | 'processing_chunks' | 'generating_summary' | 'saving' | 'done';
-
-// 完整进度信息
-export interface FullProgress {
-  fileProgress: ProcessingStatus;
-  chunkProgress: ChunkProgress;
-}
-
-// 分片处理上下文
-export interface ChunkContext {
-  carryOver: string;            // 上一片应并入下一段的内容
-  allNaturalSegments: string[];  // 所有自然分段
-  allSummaries: string[];        // 所有分段总结
-  allKeywords: string[];         // 所有关键词
-}
+export type ProcessingStep = 'idle' | 'extracting' | 'processing' | 'generating_summary' | 'saving' | 'done';
