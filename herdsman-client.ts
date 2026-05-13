@@ -22,7 +22,7 @@ export class HerdsmanClient {
     private modelName: string;
 
     constructor(baseUrl: string, modelName: string) {
-        this.baseUrl = baseUrl.replace(/\/$/, ''); // 移除末尾斜杠
+        this.baseUrl = this.normalizeBaseUrl(baseUrl);
         this.modelName = modelName;
     }
 
@@ -30,8 +30,19 @@ export class HerdsmanClient {
      * 更新配置
      */
     updateConfig(baseUrl: string, modelName: string) {
-        this.baseUrl = baseUrl.replace(/\/$/, '');
+        this.baseUrl = this.normalizeBaseUrl(baseUrl);
         this.modelName = modelName;
+    }
+
+    /**
+     * 标准化基础URL
+     * 移除末尾斜杠和可能的 /v1 后缀，确保API调用时正确拼接路径
+     */
+    private normalizeBaseUrl(baseUrl: string): string {
+        let normalized = baseUrl.replace(/\/$/, ''); // 移除末尾斜杠
+        // 如果URL末尾是 /v1，也移除它，因为我们在API调用时会添加
+        normalized = normalized.replace(/\/v1$/, '');
+        return normalized;
     }
 
     /**
