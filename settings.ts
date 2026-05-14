@@ -16,16 +16,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   modelName: '',
   
   // 处理配置
-  systemPrompt: `请帮我把这个字幕内容整理成口播文案，自然分段，移除与文案无关的信息，不要有任何文案内容的删减和调整，输出文案内容部分，要与原文长度基本一致。另外要输出分段总结，关键字。输出内容要严格按照json的形式输出。格式如下
-{
-  "自然分段": "...",
-  "分段总结": "...",
-  "关键字": ["..."]
-}
-以下是字幕内容
+  systemPrompt: `请帮我把这个字幕内容整理成口播文案，自然分段，移除与文案无关的信息，不要有任何文案内容的删减和调整，输出文案内容部分，要与原文长度基本一致。
+
+以下是字幕内容：
 {{content}}`,
-  summaryPrompt: `请对以下分段总结进行整体概括，输出一个完整的内容摘要，要求简洁明了，抓住核心要点：
-{{summaries}}`,
   
   // 状态
   isProcessing: false,
@@ -248,24 +242,6 @@ export class SubtitleProcessorSettingTab extends PluginSettingTab {
         })
         .then(textarea => {
           textarea.inputEl.rows = 12;
-          textarea.inputEl.cols = 80;
-          textarea.inputEl.style.width = '100%';
-          textarea.inputEl.style.fontFamily = 'monospace';
-        }));
-
-    // 概括提示词
-    new Setting(containerEl)
-      .setName('整体概括提示词')
-      .setDesc('用于生成整体概括的提示词，使用 {{summaries}} 作为分段总结占位符')
-      .addTextArea(text => text
-        .setPlaceholder('请输入提示词...')
-        .setValue(this.plugin.settings.summaryPrompt)
-        .onChange(async (value) => {
-          this.plugin.settings.summaryPrompt = value;
-          await this.plugin.saveSettings();
-        })
-        .then(textarea => {
-          textarea.inputEl.rows = 6;
           textarea.inputEl.cols = 80;
           textarea.inputEl.style.width = '100%';
           textarea.inputEl.style.fontFamily = 'monospace';

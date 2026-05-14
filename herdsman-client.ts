@@ -1,21 +1,8 @@
 import { Notice, requestUrl } from 'obsidian';
 
 /**
- * JSON解析错误，包含原始响应内容
- */
-export class JsonParseError extends Error {
-    public originalResponse: string;
-
-    constructor(message: string, originalResponse: string) {
-        super(message);
-        this.name = 'JsonParseError';
-        this.originalResponse = originalResponse;
-    }
-}
-
-/**
  * Herdsman API客户端
- * 负责与本地Herdsman服务通信（OpenAI兼容接口）
+ * 负责与本地Herdsman服务通信（OpenAI兼容）
  */
 export class HerdsmanClient {
     private baseUrl: string;
@@ -137,49 +124,5 @@ export class HerdsmanClient {
             console.error('Herdsman chat error:', error);
             throw new Error(`调用大模型失败: ${error.message}`);
         }
-    }
-
-    /**
-     * 调用大模型处理文本并解析JSON响应
-     * @param systemPrompt 系统提示词
-     * @param content 文本内容
-     * @returns 解析后的JSON响应
-     */
-    async processText(systemPrompt: string, content: string): Promise<any> {
-        const responseText = await this.chat(systemPrompt, content);
-        
-        try {
-            // 尝试解析JSON响应
-            // 处理可能包含markdown代码块的情况
-            let jsonText = responseText.trim();
-            
-            // 移除markdown代码块标记
-            if (jsonText.startsWith('```json')) {
-                jsonText = jsonText.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-            } else if (jsonText.startsWith('```')) {
-                jsonText = jsonText.replace(/^```\n?/, '').replace(/\n?```$/, '');
-            }
-            
-            const parsed = JSON.parse(jsonText);
-            return parsed;
-        } catch (error) {
-            console.error('Failed to parse JSON response:', responseText);
-            throw new JsonParseError(`大模型返回的JSON格式错误: ${error.message}`, responseText);
-        }
-    }
-
-    /**
-     * 调用大模型进行整体概括
-     * @param summaryPrompt 概括提示词
-     * @param summaries 分段总结列表
-     * @returns 整体概括文本
-     */
-    async generateOverallSummary(summaryPrompt: string, summaries: string[]): Promise<string> {
-        const summariesText = summaries.map((s, i) => `第${i + 1}部分总结：\n${s}`).join('\n\n');
-        const fullPrompt = summaryPrompt.replace('{{summaries}}', summariesText);
-        
-        const response = await this.chat(fullPrompt, '请根据以上分段总结生成整体概括');
-        
-        return response.trim();
     }
 }

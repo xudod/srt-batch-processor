@@ -1,7 +1,7 @@
 import { App, Notice, TFile, Vault, normalizePath } from 'obsidian';
 import { PluginSettings, ProcessResult, ProcessingStep } from './types';
 import { SubtitleExtractor } from './subtitle-extractor';
-import { HerdsmanClient, JsonParseError } from './herdsman-client';
+import { HerdsmanClient } from './herdsman-client';
 
 /**
  * 进度回调类型
@@ -217,37 +217,13 @@ export class SubtitleProcessor {
             this.updateProgress(0, 1, 0, 'processing');
             
             // 调用大模型处理（不分片，一次性处理）
-            const response = await this.herdsmanClient.processText(
+            const response = await this.herdsmanClient.chat(
                 this.settings.systemPrompt,
                 pureText
             );
             
-            const summaries = response.分段总结 ? [response.分段总结] : [];
-            const keywords = Array.isArray(response.关键字) ? response.关键字 : [];
-            const finalText = response.自然分段 || '';
-            
-            // 生成整体概括
-            let overallSummary = '';
-            if (summaries.length > 0 && this.settings.summaryPrompt) {
-                // 通知正在生成整体概括
-                this.updateProgress(0, 1, 0, 'generating_summary');
-                
-                try {
-                    overallSummary = await this.herdsmanClient.generateOverallSummary(
-                        this.settings.summaryPrompt,
-                        summaries
-                    );
-                } catch (error) {
-                    console.error('生成整体概括失败:', error);
-                    overallSummary = '整体概括生成失败';
-                }
-            }
-            
             // 通知正在保存结果
             this.updateProgress(0, 1, 0, 'saving');
-            
-            // 构建最终文件内容
-            const finalContent = this.buildFinalContent(overallSummary, keywords, summaries, finalText);
             
             // 保存到输出目录
             const outputPath = normalizePath(`${this.getOutputFolderPath()}/${fileName}.md`);
@@ -255,10 +231,10 @@ export class SubtitleProcessor {
             if (await this.app.vault.adapter.exists(outputPath)) {
                 const existingFile = this.app.vault.getFileByPath(outputPath);
                 if (existingFile) {
-                    await this.app.vault.modify(existingFile, finalContent);
+                    await this.app.vault.modify(existingFile, response);
                 }
             } else {
-                await this.app.vault.create(outputPath, finalContent);
+                await this.app.vault.create(outputPath, response);
             }
             
             // 通知处理完成
@@ -271,47 +247,6 @@ export class SubtitleProcessor {
     }
 
     /**
-     * 构建最终文件内容
-     */
-    private buildFinalContent(
-        overallSummary: string,
-        keywords: string[],
-        summaries: string[],
-        finalText: string
-    ): string {
-        const parts: string[] = [];
-        
-        // 一级标题：整体概括
-        parts.push('# 整体概括\n');
-        parts.push(overallSummary || '无整体概括内容\n');
-        
-        // 一级标题：关键字
-        parts.push('\n# 关键字\n');
-        if (keywords.length > 0) {
-            parts.push(keywords.map(k => `- ${k}`).join('\n'));
-        } else {
-            parts.push('无关键字');
-        }
-        
-        // 一级标题：分段总结
-        parts.push('\n# 分段总结\n');
-        if (summaries.length > 0) {
-            summaries.forEach((summary, index) => {
-                parts.push(`\n## 第${index + 1}部分\n`);
-                parts.push(summary);
-            });
-        } else {
-            parts.push('无分段总结');
-        }
-        
-        // 一级标题：自然分段内容
-        parts.push('\n# 自然分段内容\n');
-        parts.push(finalText || '无内容');
-        
-        return parts.join('');
-    }
-
-    /**
      * 记录失败日志
      */
     private async logFailure(
@@ -321,23 +256,12 @@ export class SubtitleProcessor {
     ): Promise<void> {
         const logFilePath = normalizePath(`${this.getLogFolderPath()}/log.md`);
         
-        let originalResponse = '';
-        let errorDetails = error.message;
-        
-        if ('originalResponse' in error && typeof (error as any).originalResponse === 'string') {
-            originalResponse = (error as any).originalResponse as string;
-        }
-        
         const timestamp = new Date().toLocaleString('zh-CN');
         const divider = '---\n';
         
         let logContent = `## 失败文件: ${fileName}\n\n`;
         logContent += `**失败时间**: ${timestamp}\n\n`;
-        logContent += `**失败原因**: ${errorDetails}\n\n`;
-        
-        if (originalResponse) {
-            logContent += `**LLM 原始响应**:\n\`\`\`json\n${originalResponse}\n\`\`\`\n\n`;
-        }
+        logContent += `**失败原因**: ${error.message}\n\n`;
         
         logContent += divider;
         

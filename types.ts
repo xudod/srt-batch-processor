@@ -13,7 +13,6 @@ export interface PluginSettings {
   
   // 处理配置
   systemPrompt: string;         // 系统提示词（字幕处理）
-  summaryPrompt: string;        // 系统提示词（整体概括）
   
   // 状态
   isProcessing: boolean;        // 是否正在处理
