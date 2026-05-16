@@ -1,5 +1,5 @@
 import { App, Notice, Plugin, PluginManifest, TFile, addIcon, Notice as ObsidianNotice } from 'obsidian';
-import { PluginSettings, ProcessResult, ProcessingStatus, ProcessingStep } from './types';
+import { PluginSettings, ProcessResult, ProcessingStatus, ProcessingStep, ProcessingStepConfig } from './types';
 import { SubtitleProcessorSettingTab, DEFAULT_SETTINGS } from './settings';
 import { SubtitleProcessor } from './processor';
 import { HerdsmanClient } from './herdsman-client';
@@ -13,7 +13,6 @@ const STEP_LABELS: Record<ProcessingStep, string> = {
   idle: '空闲',
   extracting: '提取文字',
   processing: 'AI处理',
-  generating_summary: '生成概括',
   saving: '保存结果',
   done: '完成'
 };
@@ -29,6 +28,9 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
   // 进度状态
   private currentStep: ProcessingStep = 'idle';
   private currentFileName: string = '';
+  private currentStepInfo: ProcessingStepConfig | null = null;
+  private currentChunk: number = 0;
+  private totalChunks: number = 0;
 
   async onload() {
     await this.loadSettings();
@@ -49,8 +51,11 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
     });
     
     // 设置进度回调
-    this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
+    this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step, stepInfo) => {
       this.currentStep = step;
+      this.currentChunk = currentChunk;
+      this.totalChunks = totalChunks;
+      this.currentStepInfo = stepInfo || null;
       this.updateStatusBar(this.currentFileName, 0, 0); // 刷新显示
     });
     
@@ -137,8 +142,11 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
         this.currentFileName = currentFile;
         this.updateStatusBar(currentFile, current, total);
       });
-      this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step) => {
+      this.processor.setChunkProgressCallback((currentChunk, totalChunks, chunkDuration, step, stepInfo) => {
         this.currentStep = step;
+        this.currentChunk = currentChunk;
+        this.totalChunks = totalChunks;
+        this.currentStepInfo = stepInfo || null;
         this.updateStatusBar(this.currentFileName, 0, 0);
       });
     }
@@ -152,8 +160,16 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
       console.warn('未配置Herdsman模型，请在设置中选择模型');
     }
     
-    if (!this.settings.systemPrompt || !this.settings.systemPrompt.includes('{{content}}')) {
-      console.warn('提示词中未包含 {{content}} 占位符，可能导致处理异常');
+    // 检查处理步骤配置
+    if (!this.settings.processingSteps || this.settings.processingSteps.length === 0) {
+      console.warn('未配置处理步骤，请在设置中添加处理步骤');
+    } else {
+      // 检查每个步骤的提示词是否包含 {{input}} 占位符
+      this.settings.processingSteps.forEach((step, index) => {
+        if (!step.prompt || !step.prompt.includes('{{input}}')) {
+          console.warn(`步骤${index + 1}的提示词中未包含 {{input}} 占位符，可能导致处理异常`);
+        }
+      });
     }
   }
   
@@ -285,10 +301,10 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
   private updateStatusBar(currentFile: string, current: number, total: number): void {
     if (!this.statusBarItem) return;
     
-    // 截断文件名（前8个字符）
+    // 截断文件名（前20个字符）
     let displayName = currentFile;
-    if (currentFile.length > 8) {
-      displayName = currentFile.substring(0, 8) + '...';
+    if (currentFile.length > 20) {
+      displayName = currentFile.substring(0, 20) + '...';
     }
     
     // 构建进度文本
@@ -305,8 +321,14 @@ export default class NianHuaSaiBoXingProcessor extends Plugin {
       // 添加处理步骤
       const stepLabel = STEP_LABELS[this.currentStep];
       progressText += ` · ${stepLabel}`;
+      
+      // 如果有步骤信息，添加到状态栏
+      if (this.currentStepInfo && this.totalChunks > 0) {
+        const stepInfoText = ` [步骤${this.currentChunk}/${this.totalChunks}: ${this.currentStepInfo.resultKey}]`;
+        progressText += stepInfoText;
+      }
     } else {
-      progressText = '拈花赛博行就绪';
+      progressText = 'AI处理字幕功能就绪->点击开始处理';
     }
     
     this.statusBarItem.setText(progressText);

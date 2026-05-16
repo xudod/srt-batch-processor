@@ -11,20 +11,26 @@ export interface PluginSettings {
   herdsmanUrl: string;          // Herdsman服务地址
   modelName: string;            // 模型名称
   
-  // 处理配置
-  systemPrompt: string;         // 系统提示词（字幕处理）
+  // 多步骤大模型处理配置
+  processingSteps: ProcessingStepConfig[];  // 处理步骤配置列表
   
   // 状态
   isProcessing: boolean;        // 是否正在处理
   shouldStop: boolean;          // 是否停止处理
 }
 
-// 大模型响应类型（分片处理）
-export interface ChunkResponse {
-  自然分段: string;
-  分段总结: string;
-  关键字: string[];
-  应并入下一段: string;
+/**
+ * 单个处理步骤配置
+ */
+export interface ProcessingStepConfig {
+  id: string;                    // 唯一标识
+  order: number;                 // 执行顺序（用于校验）
+  prompt: string;                // 提示词内容
+  inputSource: string;           // 输入来源：{{content}} 或 {{resultKey}}
+  resultKey: string;             // 当前阶段处理结果命名（关键字）
+  saveToNote: boolean;           // 是否保存至笔记
+  savePath: string;              // 保存路径（空则使用默认outputFolder）
+  outputOrder: number;           // 最终输出顺序
 }
 
 // 处理结果类型
@@ -43,5 +49,8 @@ export interface ProcessingStatus {
   isProcessing: boolean;
 }
 
-// 处理步骤枚举
-export type ProcessingStep = 'idle' | 'extracting' | 'processing' | 'generating_summary' | 'saving' | 'done';
+// 处理步骤枚举（用于进度显示）
+export type ProcessingStepType = 'idle' | 'extracting' | 'processing' | 'saving' | 'done';
+
+// 为了向后兼容，导出别名
+export type ProcessingStep = ProcessingStepType;
